@@ -125,7 +125,7 @@ getBuffer = (path, cb) ->
       context.decodeAudioData request.response, (buffer) ->
         cb null, buffer # Success
       , cb # Error
-
+###
 keyboard.on 'note', (ev) ->
   path = eventToPath ev
   getBuffer path, (err, buffer) ->
@@ -136,3 +136,4 @@ keyboard.on 'note', (ev) ->
       source.buffer = buffer
       source.connect context.destination
       source.noteOn(0)
+###
