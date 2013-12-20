@@ -1,3 +1,4 @@
+console.log 'hi'
 
 ###
 # Maps paths to their buffers. Lazy-loaded.
@@ -6,50 +7,25 @@ bufferMap = {}
 
 ###
 # Specific velocity/pitch map to paths
-####
-waveMap = [
-  {
-    pitch: 'C4'
-    loudness: 'ppp'
-    path: '/instruments/whirl-garageband/c4-ppp.wav'
-  }
-  {
-    pitch: 'C4'
-    loudness: 'pp'
-    path: '/instruments/whirl-garageband/c4-pp.wav'
-  }
-  {
-    pitch: 'C4'
-    loudness: 'p'
-    path: '/instruments/whirl-garageband/c4-p.wav'
-  }
-  {
-    pitch: 'C4'
-    loudness: 'mp'
-    path: '/instruments/whirl-garageband/c4-mp.wav'
-  }
-  {
-    pitch: 'C4'
-    loudness: 'mf'
-    path: '/instruments/whirl-garageband/c4-mf.wav'
-    path: 'http://localhost:8080/instruments/whirl-garageband/c4-mf.wav'
-  }
-  {
-    pitch: 'C4'
-    loudness: 'f'
-    path: '/instruments/whirl-garageband/c4-f.wav'
-  }
-  {
-    pitch: 'C4'
-    loudness: 'ff'
-    path: '/instruments/whirl-garageband/c4-ff.wav'
-  }
-  {
-    pitch: 'C4'
-    loudness: 'fff'
-    path: '/instruments/whirl-garageband/c4-fff.wav'
-  }
-]
+###
+waveMap = []
+
+###
+# FIll a waveMap with that instrument
+###
+makeInstrument = (instrument) ->
+  loudnesses = [ 'ppp', 'pp', 'p', 'mp', 'mf', 'f', 'ff', 'fff' ]
+  pitches = [ 'C2', 'F+2', 'C3', 'F+3', 'C4', 'F+4', 'C5', 'F+5' ]
+  _(loudnesses).each (loudness) ->
+    _(pitches).each (pitch) ->
+      waveMap.push
+        pitch: pitch
+        loudness: loudness
+        path: '/instruments/' + instrument + '/' + pitch + '/' + loudness + '.wav'
+
+makeInstrument 'a200'
+
+
 
 ###
 # Map loudness to velocity
@@ -119,13 +95,13 @@ noteMap =
 pitchToIndex = (pitch) ->
 
   accent = pitch.substring 1, 2
-  if /#|b/.test accent
+  if /\+|#|b/.test accent
     octave = parseInt pitch.substring 2
   else
     octave = parseInt pitch.substring(1)
   note = noteMap[ pitch.substring(0,1).toUpperCase() ]
 
-  if accent is '#'
+  if accent is '#' or accent is '+'
     note++
   else if accent is 'b'
     note--
@@ -151,13 +127,14 @@ indexMap = [
 # Convert index to pitch
 ###
 indexToPitch = (index) ->
-  octave = Math.floor( index / 12 )
+  octave = Math.floor( index / 12 ) - 2
   indexMap[index % 12] + octave
   
 
 ###
 # Map a velocity/pitch event to the path of the waveform
 ###
+
 eventToPath = (ev, waveMap) ->
   eventToNote(ev, waveMap).path
 
@@ -194,34 +171,52 @@ getBuffer = (path, cb) ->
     xhr.open('GET', path, true)
     xhr.responseType = 'arraybuffer'
     xhr.onload = (e) ->
-      context.decodeAudioData this.response, (buffer) ->
+      responseToBuffer this.response, (err, buffer) ->
         bufferMap[path] = buffer
-        cb null, buffer
+        cb(err, buffer)
     xhr.send()
+
+responseToBuffer = (response, cb) ->
+  context.decodeAudioData response, (buffer) ->
+    cb null, buffer
 
 window.context = new webkitAudioContext()
 
+# Bus
 bus = context.createGainNode()
-bus.gain.value = 1
-
-tremolo = context.createJavaScriptNode(256, 1, 1)
-tremolo.onaudioprocess = (e) ->
-  amp = 0.5 * (1 + Math.sin context.currentTime * 28)
-  inputBuffer = e.inputBuffer.getChannelData(0)
-  outputBuffer = e.outputBuffer.getChannelData(0)
-  _(inputBuffer).each (a, i) ->
-    vol = (amp*0.5 + .5)  * a
-    outputBuffer[i] = vol
-#bus.connect tremolo
-#tremolo.connect context.destination
+bus.gain.value = 0.7
 bus.connect context.destination
 
+# Tremolo
+tremolo = context.createOscillator()
+tremolo.frequency.value = 5
+tremolo.start(0)
+tremoloGain = context.createGainNode()
+tremoloGain.gain.value = 0.3
+tremoloGain.connect bus.gain
+tremolo.connect tremoloGain
+
+setTremoloStrength = (strength) ->
+  tremoloGain.gain.value = strength
+  bus.gain.value = 1 - strength
+setTremoloStrength 0.00
+
+###
+verb = context.createConvolver()
+getBuffer '/impulse_responses/fender.wav', (err, buffer) ->
+  verb.buffer = buffer
+  bus.connect verb
+  verbGain = context.createGainNode()
+  verbGain.gain.value = 0.10
+  verb.connect verbGain
+  verbGain.connect context.destination
+###
 
 
 
 currentNotes = {}
 
-playNote = (ev) ->
+window.playNote = (ev) ->
   path = eventToPath ev, waveMap
   note = eventToNote ev, waveMap
   if currentNotes[ev.pitch]
@@ -242,10 +237,11 @@ playNote = (ev) ->
         source: source
         gainNode: gain
 
+stopDelay = 0.3
 stopNote = (pitch) ->
   obj = currentNotes[pitch]
   obj.gainNode.gain.exponentialRampToValueAtTime(1, context.currentTime)
-  obj.gainNode.gain.exponentialRampToValueAtTime(0.00001, context.currentTime + 0.1)
+  obj.gainNode.gain.exponentialRampToValueAtTime(0.00001, context.currentTime + stopDelay)
   obj.source.noteOff( context.currentTime + 0.5 )
   currentNotes[pitch] = false
 
@@ -257,11 +253,36 @@ messageHandler = (message) ->
     playNote
       pitch: indexToPitch( data[1] )
       velocity: data[2]
-  else
+  else if data[0] is 128
     stopNote indexToPitch( data[1] )
+  else if data[0] is 176
+    setTremoloStrength data[2] / 127
 
-navigator.requestMIDIAccess().then (access) ->
-  m = access.inputs()[0]
-  m.onmidimessage = messageHandler
-, ->
-  console.log arguments
+connectMIDI = ->
+  console.log 'connecting'
+  navigator.requestMIDIAccess().then (access) ->
+    console.log 'access'
+    console.log access
+    access.onconnect = -> console.log 'onconnect'
+    access.ondisconnect = -> console.log 'ondisconnect'
+    m = access.inputs()[0]
+    m.onmidimessage = messageHandler
+  , (e) ->
+
+###
+# Load all sounds of an instrument
+###
+loadInstruments = (instrumentName) ->
+  ct = 0
+  _(waveMap).each (wave) ->
+    ct++
+    getBuffer wave.path, (err) ->
+      unless err
+        ct--
+        if ct is 0
+          connectMIDI()
+          1
+          # done
+
+loadInstruments()
+  
