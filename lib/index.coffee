@@ -183,7 +183,7 @@ responseToBuffer = (response, cb) ->
 window.context = new webkitAudioContext()
 
 # Bus
-bus = context.createGainNode()
+bus = context.createGain()
 bus.gain.value = 0.7
 bus.connect context.destination
 
@@ -191,7 +191,7 @@ bus.connect context.destination
 tremolo = context.createOscillator()
 tremolo.frequency.value = 5
 tremolo.start(0)
-tremoloGain = context.createGainNode()
+tremoloGain = context.createGain()
 tremoloGain.gain.value = 0.3
 tremoloGain.connect bus.gain
 tremolo.connect tremoloGain
@@ -228,11 +228,11 @@ window.playNote = (ev) ->
     else
       source = context.createBufferSource()
       source.buffer = buffer
-      gain = context.createGainNode()
+      gain = context.createGain()
       gain.connect bus
       source.connect gain
       source.playbackRate.value = Math.pow 1.0594630943592953,noteDistance(ev.pitch, note.pitch)
-      source.noteOn(0)
+      source.start(0)
       currentNotes[ev.pitch] =
         source: source
         gainNode: gain
@@ -240,10 +240,11 @@ window.playNote = (ev) ->
 stopDelay = 0.3
 stopNote = (pitch) ->
   obj = currentNotes[pitch]
-  obj.gainNode.gain.exponentialRampToValueAtTime(1, context.currentTime)
-  obj.gainNode.gain.exponentialRampToValueAtTime(0.00001, context.currentTime + stopDelay)
-  obj.source.noteOff( context.currentTime + 0.5 )
-  currentNotes[pitch] = false
+  if obj
+    obj.gainNode.gain.exponentialRampToValueAtTime(1, context.currentTime)
+    obj.gainNode.gain.exponentialRampToValueAtTime(0.00001, context.currentTime + stopDelay)
+    obj.source.stop( context.currentTime + 0.5 )
+    currentNotes[pitch] = false
 
 window.m
 
@@ -261,11 +262,9 @@ messageHandler = (message) ->
 connectMIDI = ->
   console.log 'connecting'
   navigator.requestMIDIAccess().then (access) ->
-    console.log 'access'
-    console.log access
     access.onconnect = -> console.log 'onconnect'
     access.ondisconnect = -> console.log 'ondisconnect'
-    m = access.inputs()[0]
+    m = access.inputs.values().next().value
     m.onmidimessage = messageHandler
   , (e) ->
 
